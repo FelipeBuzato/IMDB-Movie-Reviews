@@ -3,12 +3,26 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import FunctionTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.feature_extraction.text import CountVectorizer
-from PreProcessor import PreProcessor
 import re
 from bs4 import BeautifulSoup
 import html
 
-class PreProcessorClassicML(PreProcessor):
+class PreProcessorML():
+    def __init__(self, data):
+        self.data = data
+        column_groups = self.split_columns()
+        self.nlp_columns = column_groups[0]
+
+
+    def split_columns(self):
+        all_columns = self.data.columns.tolist()
+        all_columns.remove('id')
+        if('sentiment' in all_columns):
+            all_columns.remove('sentiment')
+
+        nlp_columns = all_columns
+        return [nlp_columns]
+
 
     def clean_text(self, text):
         # Remove HTML tags
