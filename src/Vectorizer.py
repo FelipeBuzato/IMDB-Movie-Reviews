@@ -7,7 +7,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 import time
 
 class Word2VecEmbedding:
-    def __init__(self, embedding_dim=300, window=5, min_count=2, max_length=200, random_state=42):        
+    def __init__(self, embedding_dim=100, window=5, min_count=2, max_length=200, random_state=42):        
         self.embedding_dim = embedding_dim
         self.window = window
         self.min_count = min_count
@@ -30,6 +30,14 @@ class Word2VecEmbedding:
             sentences.extend(X[col].str.split().tolist())
         print("time list of sentences:", time.time()-start)
 
+        lengths = [len(sentence) for sentence in sentences]
+        print(f"Mean   : {np.mean(lengths):.1f}")
+        print(f"Median : {np.median(lengths):.1f}")
+        print(f"90%    : {np.percentile(lengths, 90):.0f}")
+        print(f"95%    : {np.percentile(lengths, 95):.0f}")
+        print(f"99%    : {np.percentile(lengths, 99):.0f}")
+        print(f"Max    : {max(lengths)}")
+
         # train word2vec
         start = time.time()
         self.word2vec_ = Word2Vec(
@@ -38,7 +46,7 @@ class Word2VecEmbedding:
                               window=self.window,
                               min_count=self.min_count,
                               workers=self.workers,
-                              epochs=5,
+                              epochs=20,
                               sg=0,    # 1 for skip-gram, 0 for continuous bag-of-words 
                               seed=self.random_state
                              )
@@ -46,7 +54,7 @@ class Word2VecEmbedding:
         
         start = time.time()
         # create vocabulary with indexes -> get from word2vec
-        vocabulary = {'\PAD': 0, '\UNK': 1}
+        vocabulary = {'PAD': 0, 'UNK': 1}
         for word in self.word2vec_.wv.key_to_index:
             vocabulary[word] = len(vocabulary)
         self.vocabulary_ = vocabulary
@@ -79,11 +87,11 @@ class Word2VecEmbedding:
         start = time.time()
         # replace each review by a list of indices of size max_length
         # fill the remaining values with 0 (PAD value)
-        X_indices = np.full((len(X), self.max_length), fill_value=self.vocabulary_["\PAD"], dtype=np.int64)
+        X_indices = np.full((len(X), self.max_length), fill_value=self.vocabulary_["PAD"], dtype=np.int64)
 
         for i, review in enumerate(X):
             indices = [
-                self.vocabulary_.get(word, self.vocabulary_["\UNK"])
+                self.vocabulary_.get(word, self.vocabulary_["UNK"])
                 for word in review[:self.max_length]
             ]
             X_indices[i, :len(indices)] = indices

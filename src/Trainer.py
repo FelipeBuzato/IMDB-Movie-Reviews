@@ -1,10 +1,11 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import time
 
 class Trainer:
-    def __init__(self, optimizer="adam", lr=1e-3, epochs=10, batch_size=256, criterion="cross entropy", random_state=42):
+    def __init__(self, optimizer="adam", lr=1e-3, epochs=10, batch_size=256, criterion="cross entropy", random_state=42, device="gpu"):
         self.optimizer = optimizer
         self.lr = lr
         self.epochs = epochs
@@ -12,7 +13,25 @@ class Trainer:
         self.criterion = criterion
         self.random_state = random_state
 
+        if(device == "gpu"):
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        elif(device == "cpu"):
+            self.device = torch.device("cpu")
+        else: raise ValueError(f"device type {device} not found.")
+        self.set_seed()
+
         self.display = True
+
+
+    def set_seed(self):
+        torch.manual_seed(self.random_state)
+
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed(self.random_state)
+            torch.cuda.manual_seed_all(self.random_state)
+
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
     def get_criterion(self):
@@ -57,17 +76,24 @@ class Trainer:
 
     def stochastic_gradient_descent(self, model, X, y, optimizer, criterion):
         loss_curve = []
+        print("Model device:", next(model.parameters()).device)
         
         for epoch in range(self.epochs):
             # shuffle every epoch
-            indices = torch.randperm(X.shape[0])
+            indices = torch.randperm(X.shape[0], device=self.device)
             X_shuffled = X[indices]
             y_shuffled = y[indices]
         
             epoch_loss = 0
-        
+            
+            i = 0
             # train in batches:
             for X_batch, y_batch in zip(X_shuffled.split(self.batch_size), y_shuffled.split(self.batch_size)): 
+                i += 1
+                if(i == 1 and epoch == 0):
+                    print("X device:", X_batch.device)
+                    print("y device:", y_batch.device)
+
                 # reset gradients so they won't accumulate from previous iteration
                 optimizer.zero_grad(set_to_none=True)
                 
@@ -78,6 +104,14 @@ class Trainer:
                 # back propagation
                 loss.backward()
                 epoch_loss += loss.item() * X_batch.shape[0]
+
+                if(i==1 and epoch == 0):
+                    print("fc:", model.fc.weight.grad.norm().item())
+                    print("rnn:", model.lstm.weight_ih_l0.grad.norm().item())
+
+                    for name, param in model.named_parameters():
+                        if param.grad is not None:
+                            print(name, param.grad.norm().item())
         
                 # optimization step
                 optimizer.step()
@@ -93,9 +127,13 @@ class Trainer:
 
     def fit(self, model, X, y):
         start_training_time = time.time()
-        torch.manual_seed(self.random_state)
 
-        y = torch.as_tensor(y.values.copy())
+        # send model, X and y to device
+        model = model.to(self.device)
+        y = torch.as_tensor(y.values.copy(), dtype=torch.long, device=self.device)
+        X = X.to(self.device)
+            
+        #y = torch.as_tensor(y.values.copy())
 
         model.train()
         if(self.display): print(f"Training Activated ? {model.training}")
@@ -124,21 +162,28 @@ class Trainer:
         model.eval()
         if(self.display): print(f"Training Activated ? {model.training}")
 
+        X = X.to(self.device)
+        print("predict X device: ", X.device)
+
+        preds = []
         with torch.no_grad():
-            output = model(X)
-            predictions = output.argmax(dim=1)
-        
-        return predictions.numpy()
+            for X_batch in X.split(self.batch_size):
+                output = model(X_batch)
+                preds.append(output.argmax(dim=1))
+
+        return torch.cat(preds).cpu().numpy()
     
 
     def predict_proba(self, model, X):
         model.eval()
+        if(self.display): print(f"Training Activated ? {model.training}")
+        
+        X = X.to(self.device)
+
+        probs = []
         with torch.no_grad():
-            output = model(X)
-        probs = torch.softmax(output, dim=1)
+            for X_batch in X.split(self.batch_size):
+                output = model(X_batch)
+                probs.append(torch.softmax(output, dim=1))
 
-        return probs.numpy()
-
-
-    #def batch_generator(self, X, y):
-    #    pass
+        return probs.cpu().numpy()

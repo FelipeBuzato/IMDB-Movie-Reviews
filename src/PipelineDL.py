@@ -5,12 +5,14 @@ from Vectorizer import Word2VecEmbedding
 from ModelCollection import ModelCollection
 from sklearn.base import BaseEstimator
 from sklearn.metrics import accuracy_score
+import time
 
 class PipelineDL(BaseEstimator):
     def __init__(self, preprocessor_type="default", lowercase=None, remove_punctuation=None,
                  vectorizer_method="word2vec", embedding_dim=None, window=None, min_count=None, max_length=None, min_df=None, n_gram_range=None,
-                 model_name="RNN", input_dim=None, hidden_dim=None, output_dim=None, num_layers=None, linear_layer_sizes=None,
-                 optimizer=None, lr=None, epochs=None, batch_size=None, criterion=None, random_state=42):
+                 model_name="LSTM", hidden_dim=None, num_layers=None, fine_tunning=None, bidirectional=None, pretrained_embedding=True, dropout=None,
+                 linear_layer_sizes=None,
+                 optimizer=None, lr=None, epochs=None, batch_size=None, criterion=None, random_state=42, device=None):
         
         # preprocessor hyper-parameters
         self.preprocessor_type = preprocessor_type
@@ -27,11 +29,16 @@ class PipelineDL(BaseEstimator):
         self.n_gram_range = n_gram_range
 
         # model hyper-parameters
+        # LSTM
+        self.dropout = dropout
+        # RNN
         self.model_name = model_name
-        self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        self.output_dim = output_dim
         self.num_layers = num_layers
+        self.bidirectional = bidirectional
+        self.pretrained_embedding = pretrained_embedding
+        self.fine_tunning = fine_tunning
+        # MLP
         self.linear_layer_sizes = linear_layer_sizes
 
         # trainer hyper-parameters
@@ -42,6 +49,7 @@ class PipelineDL(BaseEstimator):
         self.criterion = criterion
 
         self.random_state = random_state
+        self.device = device
 
         self.preprocessor_ = None
         self.vectorizer_ = None
@@ -54,14 +62,14 @@ class PipelineDL(BaseEstimator):
         X = X.copy()
         self.preprocessor_ = self.get_preprocessor()
         self.vectorizer_ = self.get_vectorizer()
-        self.model_collection_ = ModelCollection()
-        model_params = self.get_model_params(self.model_name)
-        self.model_ = self.model_collection_.get(self.model_name, model_params)
-
         X = self.preprocessor_.fit_transform(X)
         X = self.vectorizer_.fit_transform(X)
 
-        trainer_params = self._get_subset_params(["optimizer", "lr", "epochs", "batch_size", "criterion", "random_state"])
+        model_params = self.get_model_params()
+        self.model_collection_ = ModelCollection()
+        self.model_ = self.model_collection_.get(self.model_name, model_params)
+
+        trainer_params = self.get_trainer_params()
         self.trainer_ = Trainer(**trainer_params)
         self.trainer_.fit(self.model_, X, y)
 
@@ -69,14 +77,22 @@ class PipelineDL(BaseEstimator):
 
 
     def predict(self, X):
-        X = X.copy()
+        start = time.time()
         X = self.preprocessor_.transform(X)
+        print("time preprocessing test: ", time.time()-start)
+
+        start = time.time()
         X = self.vectorizer_.transform(X)
-        return self.trainer_.predict(self.model_, X)
+        print("time vectorizing test: ", time.time()-start)
+
+        start = time.time()
+        preds = self.trainer_.predict(self.model_, X)
+        print("time predicting test: ", time.time()-start)
+
+        return preds
 
 
     def predict_proba(self, X):
-        X = X.copy()
         X = self.preprocessor_.transform(X)
         X = self.vectorizer_.transform(X)
         return self.trainer_.predict_proba(self.model_, X)
@@ -99,15 +115,28 @@ class PipelineDL(BaseEstimator):
         return {k: getattr(self, k) for k in keys if getattr(self, k) is not None}
     
 
-    def get_model_params(self, model_name):
-        if(model_name == "RNN"):
-            keys = ["input_dim", "hidden_dim", "output_dim", "num_layers"]
-        elif(model_name == "MLP"):
+    def get_model_params(self):
+        if(self.model_name in ["RNN", "LSTM"]):
+            keys = ["embedding_dim", "hidden_dim", "num_layers", "fine_tunning", "bidirectional", "dropout"]
+            params = self._get_subset_params(keys)
+            params["vocab_size"] = len(self.vectorizer_.vocabulary_)
+            params["embedding_matrix"] = None
+
+            if(self.pretrained_embedding):
+                params["embedding_matrix"] = self.vectorizer_.embedding_matrix_
+
+            return params
+
+        elif(self.model_name == "MLP"):
             keys = ["linear_layer_sizes"]
-        else:
-            raise ValueError(f"Model name {model_name} not found.")
+            return self._get_subset_params(keys)
         
-        return self._get_subset_params(keys)
+        else:
+            raise ValueError(f"Model name {self.model_name} not found.")
+    
+
+    def get_trainer_params(self):
+        return self._get_subset_params(["optimizer", "lr", "epochs", "batch_size", "criterion", "random_state", "device"])
 
 
     def get_preprocessor(self):
